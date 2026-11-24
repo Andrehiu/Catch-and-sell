@@ -1,16 +1,16 @@
 # Roadmap
 
-## v0.1 — pixel prototype (in progress)
+## v0.1 — pixel prototype (done — awaiting playtest)
 Goal: the core loop is playable on a phone and feels good.
-- Project setup: Phaser 3 + TypeScript + Vite, Vitest, Playwright.
-- Fishing screen: cast → bite → hook → reel mini-game.
-- 8 fish across 3 regions (Coral Bay, North Atlantic, Amazon River) with rarities and sizes; simple region picker.
-- Cooler (capacity 10).
-- Shop tab with automatic selling and a small sale animation.
-- Fishdex tab (basic list with silhouettes for uncaught fish).
-- Upgrades tab present but shows "Coming soon".
-- Save/load on the phone (localStorage).
-- Debug mode for fast testing.
+- [x] Project setup: Phaser 3 + TypeScript + Vite, Vitest, Playwright.
+- [x] Fishing screen: cast → bite → hook → reel mini-game.
+- [x] 8 fish across 3 regions (Coral Bay, North Atlantic, Amazon River) with rarities and sizes; simple region picker.
+- [x] Cooler (capacity 10).
+- [x] Shop tab with automatic selling and a small sale animation.
+- [x] Fishdex tab (basic list with silhouettes for uncaught fish).
+- [x] Upgrades tab present but shows "Coming soon".
+- [x] Save/load on the phone (localStorage).
+- [x] Debug mode for fast testing.
 
 ## v0.2 — upgrades
 - Rod tiers and boat tiers; boats unlock regions.
