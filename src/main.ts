@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { THEME } from './art/manifest';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
+import { registerServiceWorker } from './pwa/register';
 import { H, W } from './ui/kit';
 
 async function start(): Promise<void> {
@@ -25,3 +26,4 @@ async function start(): Promise<void> {
 }
 
 void start();
+registerServiceWorker();

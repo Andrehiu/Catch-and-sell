@@ -12,6 +12,13 @@ Goal: the core loop is playable on a phone and feels good.
 - [x] Save/load on the phone (localStorage).
 - [x] Debug mode for fast testing.
 
+## v0.1.1 — installable on home screen (done)
+- [x] Web app manifest (standalone, portrait) + pixel-fish icons (script in `scripts/`).
+- [x] iOS meta tags and safe-area padding so the tabs clear the home bar.
+- [x] Service worker: offline after one visit, cache named by git commit, "tap to update" bar.
+- [x] GitHub Actions: Pages deploy on `main`, CI on push/PR.
+- [x] E2E under the `/catch-and-sell/` sub-path (manifest, icons, SW control, offline reload).
+
 ## v0.2 — upgrades
 - Rod tiers and boat tiers; boats unlock regions.
 - More fish (aim for 20), including the first Legendary.

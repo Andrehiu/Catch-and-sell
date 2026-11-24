@@ -12,11 +12,15 @@ const goTab = async (page: Page, i: number) => { await page.mouse.click(tabX(i),
 
 async function catchOne(page: Page) {
   await page.mouse.click(ACTION.x, ACTION.y); // cast
-  await waitPhase(page, 'waiting');
-  await page.evaluate(() => (window as any).__debug.forceBite());
+  // debug mode can bite within 0.3 s, so 'waiting' may already be over: accept either, then make sure of the bite
+  await page.waitForFunction(() => ['waiting', 'bite'].includes((window as any).__debug?.phase()));
+  if ((await phase(page)) === 'waiting') await page.evaluate(() => (window as any).__debug.forceBite());
   await waitPhase(page, 'bite');
-  await page.mouse.click(ACTION.x, ACTION.y); // hook
-  await waitPhase(page, 'reeling');
+  // hook: a tap landing right after the cast tap can be swallowed by the button, so tap until it takes
+  await expect(async () => {
+    if ((await phase(page)) === 'bite') await page.mouse.click(ACTION.x, ACTION.y);
+    expect(await phase(page)).toBe('reeling');
+  }).toPass({ timeout: 10_000 });
   return;
 }
 
