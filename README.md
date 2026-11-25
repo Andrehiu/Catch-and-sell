@@ -2,7 +2,7 @@
 
 A cozy phone game: catch fish from around the world and sell them in your own shop.
 
-**▶ Play it: https://andrehiu.github.io/catch-and-sell/**
+**▶ Play it: https://andrehiu.github.io/Catch-and-sell/**
 
 ## Add to home screen
 - **iPhone:** open the link in **Safari** → Share → **Add to Home Screen**.
