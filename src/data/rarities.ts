@@ -7,6 +7,8 @@ export interface ReelDifficulty {
   wobble: number;
   /** How far the green zone drifts left/right (fraction of the track). */
   zoneDrift: number;
+  /** Seconds in the green to fill the meter from its start value. */
+  landSec: number;
 }
 
 export interface RarityDef {
@@ -21,11 +23,11 @@ export interface RarityDef {
 
 /** Ordered from lowest to highest rarity. */
 export const RARITIES: readonly RarityDef[] = [
-  { id: 'common', label: 'Common', weight: 60, priceMin: 8, priceMax: 20, reel: { zoneWidth: 0.4, wobble: 0.5, zoneDrift: 0 } },
-  { id: 'uncommon', label: 'Uncommon', weight: 25, priceMin: 30, priceMax: 60, reel: { zoneWidth: 0.34, wobble: 0.8, zoneDrift: 0.05 } },
-  { id: 'rare', label: 'Rare', weight: 10, priceMin: 100, priceMax: 180, reel: { zoneWidth: 0.28, wobble: 1.2, zoneDrift: 0.1 } },
-  { id: 'epic', label: 'Epic', weight: 4, priceMin: 350, priceMax: 600, reel: { zoneWidth: 0.22, wobble: 1.8, zoneDrift: 0.15 } },
-  { id: 'legendary', label: 'Legendary', weight: 1, priceMin: 1200, priceMax: 2000, reel: { zoneWidth: 0.18, wobble: 2.4, zoneDrift: 0.2 } },
+  { id: 'common', label: 'Common', weight: 60, priceMin: 8, priceMax: 20, reel: { zoneWidth: 0.4, wobble: 0.4, zoneDrift: 0, landSec: 4.5 } },
+  { id: 'uncommon', label: 'Uncommon', weight: 25, priceMin: 30, priceMax: 60, reel: { zoneWidth: 0.34, wobble: 0.8, zoneDrift: 0.05, landSec: 5.5 } },
+  { id: 'rare', label: 'Rare', weight: 10, priceMin: 100, priceMax: 180, reel: { zoneWidth: 0.28, wobble: 1.2, zoneDrift: 0.08, landSec: 6.5 } },
+  { id: 'epic', label: 'Epic', weight: 4, priceMin: 350, priceMax: 600, reel: { zoneWidth: 0.22, wobble: 1.8, zoneDrift: 0.1, landSec: 7.75 } },
+  { id: 'legendary', label: 'Legendary', weight: 1, priceMin: 1200, priceMax: 2000, reel: { zoneWidth: 0.15, wobble: 3, zoneDrift: 0.1, landSec: 9 } },
 ];
 
 export const RARITY_ORDER: readonly RarityId[] = RARITIES.map((r) => r.id);

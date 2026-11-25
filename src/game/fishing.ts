@@ -1,5 +1,5 @@
 import { getSpecies } from '../data/fish';
-import { getRarity } from '../data/rarities';
+import { getRarity, type RarityId } from '../data/rarities';
 import type { GameConfig } from './config';
 import type { CaughtFish } from './fish';
 import { randRange, type Rng } from './rng';
@@ -8,12 +8,20 @@ export type FishingPhase = 'idle' | 'waiting' | 'bite' | 'reeling' | 'result';
 export type FishingOutcome = 'caught' | 'lost' | 'missed';
 export type FishingEvent = 'bite' | 'hooked' | 'caught' | 'lost' | 'missed';
 
+/** All reel-feel numbers live here (rarity-specific ones: `reel` in src/data/rarities.ts). */
 export const REEL = {
-  push: 1.1, // needle speed (track/s) while holding
-  drift: 0.8, // needle speed to the left while released
-  fill: 0.25, // catch meter per second while in the green
-  drain: 0.12, // catch meter per second while outside
-  startMeter: 0.35,
+  accel: 4, // needle acceleration (track/s²) while holding
+  fall: 3.5, // needle acceleration to the left while released
+  maxUp: 0.5, // top speed to the right (track/s)
+  maxDown: 0.37, // top speed to the left (track/s)
+  wobbleAccel: 0.3, // wobble strength multiplier (× rarity wobble) as acceleration
+  drainRatio: 0.75, // catch meter drains at this fraction of the fill rate
+  startMeter: 0.4,
+  surgeMin: 1.0, // seconds between random fish surges (min..max)
+  surgeMax: 2.5,
+  surgeKick: 0.2, // surge size: velocity kick = ±(rarity wobble × this) track/s
+  widthJitter: 0.2, // each hooked fish has its green zone ±this fraction wider/narrower
+  graceSec: 0.8, // after hooking: needle and meter frozen, holding ignored
 };
 
 /**
@@ -27,14 +35,18 @@ export class FishingSession {
 
   // reel state (0..1 along the track)
   needle = 0.5;
+  velocity = 0;
   meter = 0;
+  /** Rarity wobble strength; public so tests can switch it off. */
+  wobble = 0;
+  private fillRate = 0.13;
   zoneCenter = 0.5;
   zoneWidth = 0.4;
 
   private waitLeft = 0;
   private biteLeft = 0;
   private reelTime = 0;
-  private wobble = 0;
+  private surgeLeft = 0;
   private zoneDrift = 0;
   private phaseA = 0;
   private phaseB = 0;
@@ -58,23 +70,31 @@ export class FishingSession {
     return true;
   }
 
-  /** Tap on the bite → fish is rolled and the reel mini-game starts. */
-  hook(): boolean {
+  /** Tap on the bite (the optional rarity is for tests: no legendary species exists yet) → fish is rolled and the reel mini-game starts. */
+  hook(rarityOverride?: RarityId): boolean {
     if (this.phase !== 'bite') return false;
     this.fish = this.rollFish();
     const sp = getSpecies(this.fish.speciesId);
-    const diff = getRarity(sp ? sp.rarity : 'common').reel;
-    this.zoneWidth = diff.zoneWidth;
+    const diff = getRarity(rarityOverride ?? (sp ? sp.rarity : 'common')).reel;
+    this.zoneWidth = diff.zoneWidth * (1 + (this.rng() * 2 - 1) * REEL.widthJitter);
     this.wobble = diff.wobble;
+    this.fillRate = (1 - REEL.startMeter) / diff.landSec;
+    this.velocity = 0;
     this.zoneDrift = diff.zoneDrift;
     this.phaseA = this.rng() * Math.PI * 2;
     this.phaseB = this.rng() * Math.PI * 2;
     this.reelTime = 0;
+    this.surgeLeft = randRange(this.rng, REEL.surgeMin, REEL.surgeMax);
     this.needle = 0.5;
     this.meter = REEL.startMeter;
     this.zoneCenter = 0.5;
     this.phase = 'reeling';
     return true;
+  }
+
+  /** True during the first moments of reeling (needle frozen, holding ignored). */
+  get inGrace(): boolean {
+    return this.phase === 'reeling' && this.reelTime < REEL.graceSec;
   }
 
   update(dt: number, holding: boolean): FishingEvent | null {
@@ -104,16 +124,29 @@ export class FishingSession {
   }
 
   private reel(dt: number, holding: boolean): FishingEvent | null {
+    const wasGrace = this.reelTime < REEL.graceSec;
     this.reelTime += dt;
     const t = this.reelTime;
-    const disturbance = this.wobble * 0.25 * (Math.sin(t * 2.1 + this.phaseA) + Math.sin(t * 3.7 + this.phaseB)) * 0.5;
-    this.needle += ((holding ? REEL.push : -REEL.drift) + disturbance) * dt;
-    this.needle = Math.min(1, Math.max(0, this.needle));
-
     const half = this.zoneWidth / 2;
-    this.zoneCenter = Math.min(1 - half, Math.max(half, 0.5 + this.zoneDrift * Math.sin(t * 1.1 + this.phaseA)));
+    this.zoneCenter = Math.min(1 - half, Math.max(half, 0.5 + this.zoneDrift * (Math.sin(t * 1.1 + this.phaseA) + 0.6 * Math.sin(t * 2.3 + this.phaseB)) / 1.6));
+    if (wasGrace) return null; // grace: nothing moves except the zone, holding is ignored
+
+    const disturbance = this.wobble * REEL.wobbleAccel * (Math.sin(t * 2.1 + this.phaseA) + Math.sin(t * 3.7 + this.phaseB)) * 0.5;
+    this.surgeLeft -= dt;
+    if (this.surgeLeft <= 0) {
+      this.surgeLeft = randRange(this.rng, REEL.surgeMin, REEL.surgeMax);
+      this.velocity += (this.rng() * 2 - 1) * this.wobble * REEL.surgeKick;
+    }
+    this.velocity += ((holding ? REEL.accel : -REEL.fall) + disturbance) * dt;
+    this.velocity = Math.min(REEL.maxUp, Math.max(-REEL.maxDown, this.velocity));
+    this.needle += this.velocity * dt;
+    if (this.needle >= 1 || this.needle <= 0) {
+      this.needle = Math.min(1, Math.max(0, this.needle));
+      this.velocity = 0;
+    }
+
     const inZone = Math.abs(this.needle - this.zoneCenter) <= half;
-    this.meter += (inZone ? REEL.fill : -REEL.drain) * dt;
+    this.meter += (inZone ? this.fillRate : -this.fillRate * REEL.drainRatio) * dt;
 
     if (this.meter >= 1) {
       this.meter = 1;

@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const SHOT = 'docs/screenshots/v0.1';
+const SHOT2 = 'docs/screenshots/v0.1.2';
+const KEEP = { x: 195, y: 56 + 70 + 318 }; // 'Keep fishing' button centre
 const TAB_Y = 812;
 const tabX = (i: number) => 48.75 + 97.5 * i;
 const ACTION = { x: 195, y: 740 };
@@ -22,6 +24,13 @@ async function catchOne(page: Page) {
     expect(await phase(page)).toBe('reeling');
   }).toPass({ timeout: 10_000 });
   return;
+}
+
+/** Force the catch and close the card the quick way (debug), so loops can cast again. */
+async function landAndClose(page: Page) {
+  await page.evaluate(() => (window as any).__debug.forceCatch());
+  await waitPhase(page, 'result');
+  await page.evaluate(() => (window as any).__debug.dismissCard());
 }
 
 test.beforeEach(async ({ page }) => {
@@ -49,6 +58,7 @@ test('catch, sell, persist', async ({ page }) => {
   await page.screenshot({ path: `${SHOT}/fish-reeling.png` });
   await page.evaluate(() => (window as any).__debug.forceCatch());
   await waitPhase(page, 'result');
+  await page.evaluate(() => (window as any).__debug.dismissCard());
 
   let s = await state(page);
   expect(s.cooler.length).toBe(1);
@@ -58,8 +68,7 @@ test('catch, sell, persist', async ({ page }) => {
   // catch two more so the shop has something to sell while we look at it
   for (let i = 0; i < 2; i++) {
     await catchOne(page);
-    await page.evaluate(() => (window as any).__debug.forceCatch());
-    await waitPhase(page, 'result');
+    await landAndClose(page);
   }
 
   await goTab(page, 1);
@@ -92,8 +101,7 @@ test('cooler full disables Cast and hints at the shop; selling re-enables it', a
   await page.evaluate(() => (window as any).__debug.pauseShop(true));
   for (let i = 0; i < 10; i++) {
     await catchOne(page);
-    await page.evaluate(() => (window as any).__debug.forceCatch());
-    await waitPhase(page, 'result');
+    await landAndClose(page);
   }
   expect((await state(page)).cooler.length).toBe(10);
   const full = await page.evaluate(() => (window as any).__debug.hint());
@@ -115,4 +123,66 @@ test('corrupt save falls back to a fresh game', async ({ page }) => {
   const s = await state(page);
   expect(s.coins).toBe(0);
   expect(s.cooler).toEqual([]);
+});
+
+const hint = (page: Page) => page.evaluate(() => (window as any).__debug.hint());
+
+test('catch card stays readable, then Keep fishing closes it', async ({ page }) => {
+  await page.evaluate(() => (window as any).__debug.pauseShop(true));
+  // early tap (inside the 0.6 s lock) does nothing
+  await catchOne(page);
+  await page.evaluate(() => (window as any).__debug.forceCatch());
+  await waitPhase(page, 'result');
+  await page.mouse.click(KEEP.x, KEEP.y);
+  expect((await hint(page)).cardVisible).toBe(true);
+  await page.evaluate(() => (window as any).__debug.dismissCard());
+
+  // a press that starts while reeling and is still held when the catch lands
+  await catchOne(page);
+  await page.mouse.move(195, 600);
+  await page.mouse.down();
+  await page.waitForTimeout(200);
+  await page.evaluate(() => (window as any).__debug.forceCatch());
+  await waitPhase(page, 'result');
+  await page.waitForTimeout(1000);
+  let h = await hint(page);
+  expect(h.cardVisible).toBe(true);
+  expect(h.cardName).not.toBe('');
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+  expect((await hint(page)).cardVisible).toBe(true);
+  await page.screenshot({ path: `${SHOT2}/catch-card.png` });
+
+  await page.mouse.click(KEEP.x, KEEP.y);
+  await page.waitForFunction(() => !(window as any).__debug.hint().cardVisible);
+  h = await hint(page);
+  expect(h.label).toBe('CAST');
+  expect(h.castEnabled).toBe(true);
+});
+
+test('reeling is calm: a 1 s hold moves the needle right but not to the edge', async ({ page }) => {
+  await page.evaluate(() => (window as any).__debug.pauseShop(true));
+  await catchOne(page);
+  await page.mouse.move(120, 700);
+  await page.mouse.down();
+  await page.waitForTimeout(1000);
+  const r = await page.evaluate(() => (window as any).__debug.reel());
+  await page.screenshot({ path: `${SHOT2}/reeling.png` });
+  await page.mouse.move(300, 500); // sliding the thumb does not release
+  await page.waitForTimeout(300);
+  const r2 = await page.evaluate(() => (window as any).__debug.reel());
+  await page.mouse.up();
+  expect(r.needle).toBeGreaterThan(0.52);
+  expect(r.needle).toBeLessThan(0.95);
+  expect(r2.needle).toBeGreaterThan(r.needle);
+  expect(r2.velocity).toBeGreaterThan(0);
+});
+
+test('a sale off the Shop tab shows a toast', async ({ page }) => {
+  await catchOne(page);
+  await landAndClose(page);
+  await page.waitForFunction(() => (window as any).__debug.toast().visible);
+  const t = await page.evaluate(() => (window as any).__debug.toast());
+  expect(t.text).toMatch(/^\+\d+ · .+ sold$/);
+  await page.screenshot({ path: `${SHOT2}/sale-toast.png` });
 });

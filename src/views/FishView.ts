@@ -7,12 +7,19 @@ import { priceFor } from '../game/fish';
 import { FishingSession, type FishingPhase } from '../game/fishing';
 import type { Game } from '../game/game';
 import { COOLER_CAPACITY } from '../game/state';
-import { Button, CONTENT_Y, W, drawPanel, panel, text } from '../ui/kit';
+import { Button, CONTENT_BOTTOM, CONTENT_Y, W, drawPanel, panel, text } from '../ui/kit';
 
 const BOBBER = { x: 195, y: 440 };
 const ROD_TIP = { x: 271, y: 528 };
 const TRACK = { x: 40, w: 310, y: 622, h: 22 };
 const METER = { x: 40, w: 310, y: 664, h: 14 };
+/** While reeling, holding anywhere between this y and the tab bar counts as holding. */
+const HOLD_ZONE_Y = 420;
+/** Catch card: ignores input this long after it appears. */
+const CARD_LOCK_SEC = 0.6;
+/** "It swam off" messages dismiss themselves after this long. */
+const MSG_SEC = 1.5;
+const CARD = { x: 25, y: CONTENT_Y + 70, w: 340, h: 350 };
 
 export class FishView {
   readonly root: Phaser.GameObjects.Container;
@@ -33,6 +40,15 @@ export class FishView {
   private readonly cardRarity: Phaser.GameObjects.Text;
   private readonly cardInfo: Phaser.GameObjects.Text;
   private readonly cardNew: Phaser.GameObjects.Text;
+  private readonly cardCooler: Phaser.GameObjects.Text;
+  private readonly keepButton: Button;
+  private readonly msg: Phaser.GameObjects.Container;
+  private readonly msgText: Phaser.GameObjects.Text;
+  private readonly holdPointers = new Set<Phaser.Input.Pointer>();
+  private resultOpen = false;
+  private resultAge = 0;
+  private holding = false;
+  private cardName_ = '';
   private actionLabel = '';
   private actionEnabled = true;
   private prevPhase: FishingPhase = 'idle';
@@ -68,15 +84,35 @@ export class FishView {
     this.status = text(scene, W / 2, CONTENT_Y + 100, '', 18, THEME.cream, { wordWrap: { width: 330 }, align: 'center' });
     const statusPanel = panel(scene, 20, CONTENT_Y + 74, 350, 52);
 
-    // Result card
+    // Catch card ("You caught…"), stays until the player taps Keep fishing
     const cardBg = scene.add.graphics();
-    drawPanel(cardBg, 0, 0, 340, 130);
-    this.cardFish = scene.add.image(70, 66, fishArtId('yellowstripe_scad')).setScale(PIXEL_SCALE.fish);
-    this.cardName = text(scene, 205, 24, '', 18).setOrigin(0.5);
-    this.cardRarity = text(scene, 205, 52, '', 16);
-    this.cardInfo = text(scene, 205, 84, '', 15);
-    this.cardNew = text(scene, 205, 108, '', 14, THEME.green);
-    this.card = scene.add.container(25, CONTENT_Y + 150, [cardBg, this.cardFish, this.cardName, this.cardRarity, this.cardInfo, this.cardNew]);
+    drawPanel(cardBg, 0, 0, CARD.w, CARD.h);
+    const cardTitle = text(scene, CARD.w / 2, 24, 'You caught…', 16, THEME.dim);
+    this.cardFish = scene.add.image(CARD.w / 2, 104, fishArtId('yellowstripe_scad')).setScale(PIXEL_SCALE.fish);
+    this.cardName = text(scene, CARD.w / 2, 180, '', 22);
+    this.cardRarity = text(scene, CARD.w / 2, 208, '', 16);
+    this.cardInfo = text(scene, CARD.w / 2, 234, '', 16);
+    this.cardNew = text(scene, CARD.w / 2, 260, '', 16, THEME.green);
+    this.cardCooler = text(scene, CARD.w / 2, 284, '', 13, THEME.dim);
+    this.keepButton = new Button(scene, CARD.w / 2, 318, 240, 48, 'Keep fishing', {
+      down: () => this.dismissResult(),
+    }, 20);
+    this.card = scene.add.container(CARD.x, CARD.y, [
+      cardBg, cardTitle, this.cardFish, this.cardName, this.cardRarity, this.cardInfo, this.cardNew, this.cardCooler, this.keepButton.root,
+    ]);
+
+    // Short message for "It swam off" / "It got away"
+    const msgBg = scene.add.graphics();
+    drawPanel(msgBg, 0, 0, 300, 64);
+    this.msgText = text(scene, 150, 32, '', 20);
+    this.msg = scene.add.container(45, CONTENT_Y + 200, [msgBg, this.msgText]);
+
+    // Hold anywhere in the lower part of the screen to reel; sliding the thumb never releases
+    scene.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      const ph = this.session.phase;
+      if (!this.root.visible || (ph !== 'bite' && ph !== 'reeling')) return;
+      if (p.y >= HOLD_ZONE_Y && p.y < CONTENT_BOTTOM) this.holdPointers.add(p);
+    });
 
     // Reel UI
     this.reelPanel = panel(scene, 20, 596, 350, 100);
@@ -90,7 +126,7 @@ export class FishView {
     // order matters: statusPanel must sit below status text
     this.root = scene.add.container(0, 0, [
       this.bg, this.line, rod, this.bobber, this.hooked, this.bangText,
-      statusPanel, this.status, this.card, this.reelPanel, this.reelGfx, this.reelHint,
+      statusPanel, this.status, this.card, this.msg, this.reelPanel, this.reelGfx, this.reelHint,
       ...this.regionButtons.map((b) => b.root), this.action.root,
     ]);
     this.render();
@@ -98,6 +134,7 @@ export class FishView {
 
   private onActionDown(): void {
     const s = this.session;
+    if (this.resultOpen) return;
     if (s.canCast) {
       if (this.core.canCast()) s.cast();
     } else if (s.phase === 'bite') {
@@ -108,36 +145,75 @@ export class FishView {
   /** Called every frame. */
   update(dt: number): void {
     this.time += dt;
-    const holding = this.action.isDown && this.session.phase === 'reeling';
-    this.session.update(dt, holding);
+    for (const p of this.holdPointers) if (!p.isDown) this.holdPointers.delete(p);
+    this.holding = this.holdPointers.size > 0 && this.session.phase === 'reeling';
+    this.session.update(dt, this.holding);
     if (this.session.phase === 'result' && this.prevPhase !== 'result') this.onResult();
+    if (this.session.phase !== 'result' && this.resultOpen) this.resultOpen = false;
     this.prevPhase = this.session.phase;
+    if (this.resultOpen) {
+      this.resultAge += dt;
+      if (this.session.outcome !== 'caught' && this.resultAge >= MSG_SEC) this.dismissResult();
+    }
     this.render();
   }
 
   private onResult(): void {
     const s = this.session;
+    this.resultOpen = true;
+    this.resultAge = 0;
+    this.cardName_ = '';
     if (s.outcome === 'caught' && s.fish) {
       const res = this.core.addCatch(s.fish);
       const sp = getSpecies(s.fish.speciesId);
       if (sp) {
         const rar = getRarity(sp.rarity);
+        this.cardName_ = sp.name;
         this.cardFish.setTexture(fishArtId(sp.id));
         this.cardName.setText(sp.name);
-        this.cardRarity.setText(`${rar.label.toUpperCase()}`).setColor(RARITY_COLOR[sp.rarity]);
+        this.cardRarity.setText(rar.label.toUpperCase()).setColor(RARITY_COLOR[sp.rarity]);
         this.cardInfo.setText(`${s.fish.sizeCm} cm  ·  ${priceFor(s.fish)} coins`);
         this.cardNew.setText(res.newSpecies ? 'NEW SPECIES!' : res.newBest ? 'NEW BEST SIZE!' : '');
+        this.cardCooler.setText(`Sent to cooler (${this.core.coolerCount}/${COOLER_CAPACITY})`);
       }
+    } else {
+      this.msgText.setText(s.outcome === 'lost' ? 'It swam off…' : 'It got away…');
     }
   }
 
+  /** Close the catch card / message. Only a fresh press on the button gets here (never a held reel press). */
+  dismissResult(): void {
+    if (!this.resultOpen) return;
+    this.resultOpen = false;
+    this.render();
+  }
+
   /** Current status line and action-button label (for e2e). */
-  get hint(): { status: string; label: string; castEnabled: boolean } {
-    return { status: this.status.text, label: this.actionLabel, castEnabled: this.actionEnabled };
+  get hint(): { status: string; label: string; castEnabled: boolean; cardVisible: boolean; cardName: string } {
+    return {
+      status: this.status.text,
+      label: this.actionLabel,
+      castEnabled: this.actionEnabled,
+      cardVisible: this.card.visible,
+      cardName: this.cardName_,
+    };
+  }
+
+  /** Reel numbers (for e2e). */
+  get reel(): { needle: number; meter: number; velocity: number; grace: boolean } {
+    const s = this.session;
+    return { needle: s.needle, meter: s.meter, velocity: s.velocity, grace: s.inGrace };
   }
 
   forceBite(): boolean { return this.session.forceBite(); }
-  forceCatch(): boolean { return this.session.forceCatch(); }
+  forceCatch(): boolean {
+    if (!this.session.forceCatch()) return false;
+    // handle the result right away (not on the next frame) so callers see a consistent state
+    this.prevPhase = 'result';
+    this.onResult();
+    this.render();
+    return true;
+  }
 
   private render(): void {
     const s = this.session;
@@ -159,24 +235,31 @@ export class FishView {
     switch (s.phase) {
       case 'idle':
       case 'result': {
-        if (s.phase === 'result' && s.outcome === 'lost') msg = 'It swam off. Cast again!';
-        else if (s.phase === 'result' && s.outcome === 'missed') msg = 'It got away. Cast again!';
-        else if (s.phase === 'result') msg = 'Nice catch! Cast again?';
-        else msg = 'Tap CAST to start fishing';
-        if (coolerFull) {
-          msg = `Cooler full (${COOLER_CAPACITY}/${COOLER_CAPACITY}) — visit the Shop tab!`;
-          label = 'COOLER FULL';
+        if (this.resultOpen) {
+          msg = s.outcome === 'caught' ? 'Nice catch!' : s.outcome === 'lost' ? 'It swam off.' : 'It got away.';
           enabled = false;
+        } else {
+          msg = 'Tap CAST to start fishing';
+          if (coolerFull) {
+            msg = `Cooler full (${COOLER_CAPACITY}/${COOLER_CAPACITY}) — visit the Shop tab!`;
+            label = 'COOLER FULL';
+            enabled = false;
+          }
         }
         break;
       }
       case 'waiting': msg = 'Waiting for a bite…'; label = 'WAITING…'; enabled = false; break;
       case 'bite': msg = 'BITE! Tap now!'; label = 'HOOK IT!'; break;
-      case 'reeling': msg = 'Hold to reel!'; label = 'HOLD TO REEL'; break;
+      case 'reeling':
+        msg = s.inGrace ? 'Get ready…' : 'Hold to reel!';
+        label = s.inGrace ? 'GET READY…' : 'HOLD TO REEL';
+        break;
     }
     this.status.setText(msg);
     this.action.setLabel(label);
     this.action.setEnabled(enabled);
+    this.action.setSelected(this.holding);
+    this.action.root.setVisible(!this.resultOpen);
     this.actionLabel = label;
     this.actionEnabled = enabled;
 
@@ -202,14 +285,20 @@ export class FishView {
     }
 
     // result card
-    this.card.setVisible(s.phase === 'result' && s.outcome === 'caught');
+    const showCard = this.resultOpen && s.outcome === 'caught';
+    this.card.setVisible(showCard);
+    this.keepButton.setEnabled(this.resultAge >= CARD_LOCK_SEC);
+    this.msg.setVisible(this.resultOpen && s.outcome !== 'caught');
 
     // reel UI
     const reeling = s.phase === 'reeling';
     this.reelPanel.setVisible(reeling);
     this.reelHint.setVisible(reeling);
     this.reelGfx.clear().setVisible(reeling);
-    if (reeling) this.drawReel();
+    if (reeling) {
+      this.reelHint.setText(s.inGrace ? 'Get ready…' : 'Hold anywhere to reel');
+      this.drawReel();
+    }
   }
 
   private drawReel(): void {

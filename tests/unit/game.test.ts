@@ -234,32 +234,114 @@ describe('fishing session', () => {
     expect(s.canCast).toBe(true);
   });
 
-  it('a hold-when-left-of-zone bot catches a common fish; never-holding loses', () => {
-    const play = (bot: boolean) => {
-      const s = setup(5);
-      s.cast();
-      s.forceBite();
-      s.hook();
-      for (let i = 0; i < 60 * 60 && s.phase === 'reeling'; i++) {
-        s.update(1 / 60, bot && s.needle < s.zoneCenter);
-      }
-      return s.outcome;
-    };
-    expect(play(true)).toBe('caught');
-    expect(play(false)).toBe('lost');
+  /** Hook a fish of the given rarity; `calm` switches the rarity wobble off. */
+  const hooked = (seed: number, rarity: RarityId, calm = false) => {
+    const s = setup(seed);
+    s.cast();
+    s.forceBite();
+    s.hook(rarity);
+    if (calm) s.wobble = 0;
+    return s;
+  };
+  const DT = 1 / 120;
+
+  it('needle: holding from rest crosses the bar in 1.8–2.2 s', () => {
+    const s = hooked(1, 'common', true);
+    s.update(REEL.graceSec + DT, false); // skip the grace period
+    s.needle = 0;
+    s.velocity = 0;
+    let t = 0;
+    while (s.needle < 1 && t < 10) {
+      s.update(DT, true);
+      t += DT;
+      s.meter = 0.5; // keep the fish on the line
+      s.phase = 'reeling';
+    }
+    expect(t).toBeGreaterThanOrEqual(1.8);
+    expect(t).toBeLessThanOrEqual(2.2);
   });
 
-  it('a bot can also catch the hardest rarity (difficulty is fair)', () => {
-    let caught = 0;
-    for (let seed = 1; seed <= 20; seed++) {
-      const s = setup(seed, 'arapaima');
-      s.cast();
-      s.forceBite();
-      s.hook();
-      for (let i = 0; i < 60 * 120 && s.phase === 'reeling'; i++) s.update(1 / 60, s.needle < s.zoneCenter);
-      if (s.outcome === 'caught') caught++;
+  it('needle: releasing from the right edge falls to the left in 2.5–3 s', () => {
+    const s = hooked(1, 'common', true);
+    s.update(REEL.graceSec + DT, false);
+    s.needle = 1;
+    s.velocity = 0;
+    let t = 0;
+    while (s.needle > 0 && t < 10) {
+      s.update(DT, false);
+      t += DT;
+      s.meter = 0.5;
+      s.phase = 'reeling';
     }
-    expect(caught).toBeGreaterThanOrEqual(15);
-    expect(REEL.fill).toBeGreaterThan(REEL.drain);
+    expect(t).toBeGreaterThanOrEqual(2.5);
+    expect(t).toBeLessThanOrEqual(3);
+  });
+
+  it('grace: for 0.8 s the meter never drops and holding does nothing', () => {
+    for (const holding of [true, false]) {
+      const s = hooked(2, 'legendary');
+      expect(s.inGrace).toBe(true);
+      for (let t = 0; t < REEL.graceSec - 0.02; t += DT) {
+        s.update(DT, holding);
+        expect(s.meter).toBeGreaterThanOrEqual(REEL.startMeter);
+        expect(s.needle).toBe(0.5);
+      }
+      expect(s.phase).toBe('reeling');
+    }
+    expect(REEL.startMeter).toBe(0.4);
+  });
+
+  /** A human-ish player: sees the world 0.25 s late, holds while the needle is left of the zone centre. */
+  const humanRun = (rarity: RarityId, seed: number) => {
+    const s = hooked(seed, rarity);
+    const delay = Math.round(0.25 / DT);
+    const seen: boolean[] = [];
+    let t = 0;
+    while (s.phase === 'reeling' && t < 600) {
+      seen.push(s.needle < s.zoneCenter);
+      const holding = seen.length > delay ? seen[seen.length - 1 - delay] : false;
+      s.update(DT, holding);
+      t += DT;
+    }
+    return { caught: s.outcome === 'caught', t };
+  };
+  const rate = (rarity: RarityId) => {
+    let caught = 0;
+    let time = 0;
+    for (let seed = 1; seed <= 50; seed++) {
+      const r = humanRun(rarity, seed);
+      if (r.caught) {
+        caught++;
+        time += r.t;
+      }
+    }
+    return { rate: caught / 50, avgTime: caught ? time / caught : 0 };
+  };
+
+  it('human bot (0.25 s reaction): common ≥95%, rare ≥75%, legendary 30–80%', () => {
+    const common = rate('common');
+    const rare = rate('rare');
+    const legendary = rate('legendary');
+    console.log('bot catch rates', { common, uncommon: rate('uncommon'), rare, epic: rate('epic'), legendary });
+    expect(common.rate).toBeGreaterThanOrEqual(0.95);
+    expect(common.avgTime).toBeGreaterThanOrEqual(4);
+    expect(common.avgTime).toBeLessThanOrEqual(6);
+    expect(rare.rate).toBeGreaterThanOrEqual(0.75);
+    expect(legendary.rate).toBeGreaterThanOrEqual(0.3);
+    expect(legendary.rate).toBeLessThanOrEqual(0.8);
+  });
+
+  it('a player who never holds loses every fish, whatever the rarity', () => {
+    for (const rarity of RARITY_ORDER) {
+      for (let seed = 1; seed <= 10; seed++) {
+        const s = hooked(seed, rarity);
+        for (let i = 0; i < 120 * 120 && s.phase === 'reeling'; i++) s.update(DT, false);
+        expect(s.outcome).toBe('lost');
+      }
+    }
+  });
+
+  it('meter drains slower than it fills', () => {
+    expect(REEL.drainRatio).toBeLessThan(1);
   });
 });

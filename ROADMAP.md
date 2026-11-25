@@ -19,6 +19,14 @@ Goal: the core loop is playable on a phone and feels good.
 - [x] GitHub Actions: Pages deploy on `main`, CI on push/PR.
 - [x] E2E under the `/catch-and-sell/` sub-path (manifest, icons, SW control, offline reload).
 
+## v0.1.2 — reel feel + catch card (done — awaiting real-phone check)
+- [x] Catch card ("You caught…": art, name, rarity, size, value, NEW badges, cooler n/10) stays until "Keep fishing"; 0.6 s input lock, fresh press only.
+- [x] "It swam off / got away" message auto-dismisses after 1.5 s (no instant re-cast).
+- [x] Calmer reel: needle inertia + speed caps, gentler wobble, slower meter drain, 0.8 s "Get ready…" grace; all numbers in `REEL` (`src/game/fishing.ts`) and per-rarity in `src/data/rarities.ts`.
+- [x] Hold anywhere in the lower screen; sliding the thumb never releases.
+- [x] Sale toast + coin counter animation when a sale happens off the Shop tab.
+- [x] Tests: needle timing, grace, seeded human bot per rarity, never-hold; e2e for card, calm reel, toast.
+
 ## v0.2 — upgrades
 - Rod tiers and boat tiers; boats unlock regions.
 - More fish (aim for 20), including the first Legendary.
